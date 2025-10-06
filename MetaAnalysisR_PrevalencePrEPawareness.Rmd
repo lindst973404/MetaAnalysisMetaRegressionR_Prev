@@ -1,0 +1,527 @@
+---
+title: "Meta-Analysis and Meta-Regression using R"
+subtitle: "Generating mean prevalence from effect sizes after data extraction"
+output:
+  pdf_document:
+    toc: false         # Optional: adds table of contents
+    number_sections: false
+    keep_tex: true    # Optional: keeps intermediate .tex file for debugging
+    includes:
+      in_header: preamble.tex 
+    highlight: tango
+    latex_engine: pdflatex
+    pandoc_args:       
+      - "--variable"
+      - "verbatim-in-note"
+      - "--variable"
+      - "table-caption-is-heading:false"
+fontsize: 11pt        # Optional: adjust font size
+geometry: margin=1in  # Optional: control page margins
+header-includes:
+  - \usepackage{longtable}
+editor_options:
+  chunk_output_type: console
+---
+
+\begin{center}
+\textbf{Lindsay Trujillo, PhD, MPH}
+
+\vspace{0.75em}
+
+\href{mailto:lindttruj@gmail.com}{\textcolor{blue}{\underline{Email: lindttruj@gmail.com}}} \quad\textbar\quad
+\href{https://www.linkedin.com/in/lindsay-trujillo}{\textcolor{blue}{\underline{LinkedIn}}} \quad\textbar\quad
+\href{https://scholar.google.com/citations?user=wwlDxpwAAAAJ\&hl=en}{\textcolor{blue}{\underline{Google Scholar}}}
+\end{center}
+
+# Introduction
+
+Research involves conducting lots of studies within one topic, such as whether a medication work or does an action lead to a injury. Between those hundreds or thousands of studies, you may get different answer. It could be off by a bit, or it could be so different, it can seem contradictory! If you want to see how all that information tells you, systematic review and meta-analysis (SRMA) would be your method! What meta-analysis does is help combine all those studies to determine the closet overall number.
+
+One of the reasons I love this method is because it puts a different mindset to the analysis. If you were coming from clinical data or disease surveillance, you may appreciate how each data point comes from a person. However, your data is coming from papers, a synthesis of people's experiences. It may remove you from working with sensitive data, but you come to appreciate how even those data points came to be, and how you are gathering all the hard work of scientists and clinicians to create clear information. 
+
+This workflow has been derived from a SRMA manuscript I've developed for a doctoral class, where I focused on the prevalence of PrEP awareness in 2022. However, to show that these skillsets are still fresh, I modified my R program and created a dummy dataset. For this scenario, 17 fictional papers were selected to go forward for data extraction from following this PICOS framework focusing on the prevalence of awareness of HIV pre-exposure prophylaxis (PrEP) among young adults ages 18 to 25 years old who ever tested for HIV.\textsuperscript{1}
+
+
+```{=latex}
+\renewcommand{\arraystretch}{1.25}  % ~10% taller rows (~2–3pt)
+\begin{table}[ht]
+\centering
+\begin{tabular}{|p{4cm}|p{10cm}|}
+\hline
+\multicolumn{2}{|c|}{\textbf{Table 1: Study Characteristics}} \\
+\hline
+\textbf{Category} & \textbf{Information} \\
+\hline
+Population & Young adults aged 18–25 years \\
+\hline
+Intervention / Exposure & Received survey question(s) regarding PrEP awareness \\
+\hline
+Conditions & In the United States \\
+\hline
+Outcome & Aware of HIV Pre-exposure prophylaxis (PrEP) \\
+\hline
+Study Designs & Cross-sectional \\
+\hline
+\end{tabular}
+\label{tab:study_characteristics}
+\end{table}
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+library(metafor)
+library(robvis)
+library(tidyverse)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(gt)
+
+#Bringing in dummy data
+load("data_extract.RData")
+
+```
+
+# Exploring the data
+
+It was agreed upon earlier for this study that you would extract the following information of the 17 studies: 
+
+  1) Race/ethnicity: It was decided to collect race/ethnicity by two variables 1) percentage of non-Hispanic White and 2) non-Hispanic Black. This was done based on what information was available to collect across the 17 papers. For data extraction, you are often restricted to what the papers as a whole are able to disclose. For example, a study may have the ability to report on multiple race/ethnicity categories due to a larger sample size. However, some studies may either rely on a different method of reporting or may not have the sample size to disclose more nuanced categories.\textsuperscript{2} This appears to be the case here for this dummy dataset. 
+
+  2) Sex of study population: This documents whether the study itself had only male, female, or the study was not exclusive by sex (Mixed) For this subject, there may be studies that focus on a specific population that has been more vulnerable to HIV, such as a those who are gay, bisexual, or other men who have sex with men or sexually-active women.\textsuperscript{3,4} As a result, it was decided to document whether the study focus for recruitment was mixed sexes or not.   
+
+  3) Sexually active: For some that focus on HIV risk, they may restrict the analysis to those who are sexually active. However, information regarding PrEP awareness can come from studies that doesn't have this requirement for study eligibility. \textsuperscript{5}  Therefore, it was decided to extract this information.
+
+  4) Design of PrEP awareness question (PrEP Question Exclusion): PrEP is an intervention that benefits from those who are HIV-negative and fit the criteria based on recent clinical guidance.\textsuperscript{6} It may not be as beneficial for those who aren't within that criteria. Sometimes there is a need to determine the level of awareness among those who are eligibile for PrEP.\textsuperscript{7} As a result, a full-text investigation of the 17 were done to determine whether the question(s) designed to ask about PrEP awareness was limited to those who are HIV-negative.
+
+After extracting your data from the 17 papers, here is a descriptive table. For the sake of the exercise, there is only missing information for the categorical variables.
+
+```{=latex}
+\newpage
+```
+
+```{r table2, fig.cap="Table 2. Study-Level Demographics and Study Design Characteristics (N=17)", fig.align='center', fig.pos='H', message = FALSE, warning = FALSE, echo=FALSE}
+#Labels for categorical variables
+data_extract_label <- data_extract %>%
+  mutate(
+    SexPop_label = case_when(
+      SexPop == 1 ~ "All-male",
+      SexPop == 2 ~ "All-female",
+      SexPop == 3 ~ "Mixed",
+      is.na(SexPop) ~ "Missing"
+    ),
+    PrEPQExclusion_label = case_when(
+      PrEPQExclusion == 1 ~ "Excluded",
+      PrEPQExclusion == 0 ~ "Not Excluded",
+      is.na(PrEPQExclusion) ~ "Missing"
+    )
+  )
+
+#Custom category order for table
+data_extract_label <- data_extract_label %>%
+  mutate(
+    SexPop_label = factor(SexPop_label, levels = c("All-male", "All-female", "Mixed", "Missing")),
+    PrEPQExclusion_label = factor(PrEPQExclusion_label, levels = c("Excluded", "Not Excluded", "Missing"))
+  )
+
+t1_cat <- data_extract_label %>%
+  count(SexPop_label) %>%
+  mutate(
+    Percent = round(100 * (n / sum(n)), 1),
+    Variable = "Sex Composition"
+  ) %>%
+  select(Variable, Category = SexPop_label, n, Percent) %>%
+  bind_rows(
+    data_extract_label %>%
+      count(PrEPQExclusion_label) %>%
+      mutate(
+        Percent = round(100 * (n / sum(n)), 1),
+        Variable = "PrEP Question Exclusion"
+      ) %>%
+      select(Variable, Category = PrEPQExclusion_label, n, Percent)
+  ) %>%
+  mutate(
+    Category = as.character(Category),
+    n = as.integer(n),
+    Percent = as.numeric(Percent),
+    `Mean (SD)` = NA_character_
+  )
+
+t1_cat <- t1_cat %>%
+  mutate(`Mean (SD)` = NA_character_)
+
+# Continuous summaries
+t1_num <- data_extract %>%
+  summarise(
+    PercNHW = paste0(round(mean(PercNHW, na.rm = TRUE), 1), " (", round(sd(PercNHW, na.rm = TRUE), 1), ")"),
+    PercNHB = paste0(round(mean(PercNHB, na.rm = TRUE), 1), " (", round(sd(PercNHB, na.rm = TRUE), 1), ")"),
+    PercSexAct = paste0(round(mean(PercSexAct, na.rm = TRUE), 1), " (", round(sd(PercSexAct, na.rm = TRUE), 1), ")")
+  ) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Mean (SD)") %>%
+  mutate(
+    Category = as.character("—"),
+    n = NA_integer_,
+    Percent = NA_real_
+  )
+
+# Combine both summaries
+table1 <- bind_rows(  t1_cat,  t1_num)
+
+#Labeling variables
+labelt1_lookup <- c(
+  "PercNHW" = "% Non-Hispanic White",
+  "PercNHB" = "% Non-Hispanic Black",
+  "PercSexAct" = "% Sexually Active",
+  "SexPop" = "Sex Composition",
+  "PrEPQExclusion" = "PrEP Question Exclusion"
+)
+
+# Suppress repeated labels in Variable column
+table1 <- table1 %>%
+  group_by(Variable) %>%
+  mutate(Variable = ifelse(row_number() == 1, Variable, "")) %>%
+  ungroup()
+
+#Bringing in updated labels to Table 1
+table1_labeled <- table1 %>%
+  mutate(Variable = recode(Variable, !!!labelt1_lookup))
+
+#Cleaning up labels/footnotes for final table
+table1_labeled <- table1_labeled %>%
+  group_by(Variable) %>%
+  mutate(Variable = ifelse(row_number() == 1, Variable, "")) %>%
+  ungroup() %>%
+  mutate(Variable = case_when(
+    Variable == "Sex Composition" ~ "Sex Composition¹",
+    Variable == "PrEP Question Exclusion" ~ "PrEP Question Exclusion²",
+    TRUE ~ Variable
+  ))
+
+# Format with gt for manuscript-ready output
+table1_labeled %>%
+  gt() %>%
+  tab_header(
+    title = "Table 2. Study-Level Demographics and Study Design Characteristics (N=17)"
+  ) %>%
+  cols_label(
+    Category = "Category",
+    n = "N",
+    Percent = "%",
+    `Mean (SD)` = "Mean (SD)"
+  ) %>%
+  fmt_missing(columns = everything(), missing_text = "") %>%
+  tab_options(
+    table.font.size = "small",
+    data_row.padding = px(3)
+  )  %>%
+  tab_source_note(md("Abbreviations: PrEP = HIV pre-exposure prophylaxis")) %>%
+  tab_source_note(md("¹ Refers to whether the study population was all-male, all-female, or mixed.")) %>%
+  tab_source_note(md("² Indicates whether PrEP awareness questions were only asked of HIV-negative participants.")
+                  )
+
+```
+
+We see that most of our studies were mixed in regards of sex composition (64.7%) and most of the questions asking about whether they were aware of PrEP did not have a restriction to those who were HIV-negative (Table 2). We also see that there was an average of 48% of the study population being Non-Hispanic White and nearly 33% Non-Hispanic Black. In addition, there was an average of 54% of participants among the 17 studies that reported being sexually active. 
+
+```{r datamanipulation, echo=FALSE}
+#For meta-regression
+data_extract <- data_extract %>%
+  mutate(
+    male_only = case_when(
+      # Males only in study
+      SexPop == 1                                   ~ "1",      
+      # Studies had women
+      SexPop %in% c(2, 3)                           ~ "0",
+    )
+  )
+```
+
+# Meta-analysis 
+
+From the 17 studies, we want to evaluate the effect size of mean prevalence of PrEP awareness. This method permits us to "pool" prevalence estimates from each selected study. However, what makes this method unique is how it accounts for study-level variability, enhancing both statistical power and generalizability. This is important to consider as we have studies that do different in population based on racial diversity or where these studies could have been conducted. For meta-analysis, a key characteristic to be mindful of between-study heterogeneity, defined as the extent to which the observed differences reflect true variation as opposed to sampling error.\textsuperscript{8}
+
+Another reason that heterogeneity is important to consider as it influences the type of meta-analysis model to go forward with: fixed-effects or random-effects. If we had assumed that all 17 studies are constantly the same type of study, the same (or similar) population-makeup, you'd go forward with the assumption that the variability in the true effect size is constant between those studies.\textsuperscript{9} However, we can see from the descriptive data that there may be variability between studies so we must go forward with random-effects. 
+
+To conduct meta-analysis within R, the *metafor* package will be used.\textsuperscript{10} For determining the mean prevalence of PrEP awareness among U.S. youth, the proportion of youth that were aware of PrEP underwent a double-arcsine transformation. To assess for between-study heterogeneity, we will look at tau\textsuperscript{2} as well as I\textsuperscript{2} as well as Q-test. I\textsuperscript{2} gives information about the proportion of variation of the effect sizes due to heterogeneity while Q-test is a hypothesis test evaluating whether observed differences in mean prevalence across the 17 studies is greater than expected due to chance.
+
+```{r meta-analysis, message = FALSE, warning = FALSE}
+
+# Computing the log-transformed prevalence (adapted from incidence rate logic)
+meta_analysis <- escalc(measure = "IRLN",  # Log-transformed 
+                   xi = NPrEPAwr,          # number of events
+                   ti = Nstudy,            # total sample size
+                   data = data_extract,    # data set
+                   var.names = c("log_prev", "var_log_prev"))  
+
+# Random Effects meta-analysis
+final_meta <- rma(yi = log_prev,           # effect size (log-transformed)
+                     vi = var_log_prev,    # Var of effect size
+                     data = meta_analysis, # data set
+                     method = "REML")      # method for computing RE model
+summary(final_meta)   # to print out results
+
+
+exp(final_meta$beta)  #-1.3095
+exp(final_meta$ci.lb) #-1.6631
+exp(final_meta$ci.ub) #-0.9559  
+
+```
+
+From this output, we see that the estimated mean prevalence of PrEP awareness among U.S. youth is 27.0% (95% CI: 19.0% - 38.4%). We also see our metric for heterogeneity was significant (tau2 = 0.5352, SE = 0.1955). This indicates that our differences in effect size may not likely have arisen by chance (Q=937.1, df = 16, p<.0001).
+
+Let's take a look at our forest plot:
+
+```{r forestplot, fig.cap="Effect size (Prevalence) of PrEP awareness from eligible studies", fig.align='center', out.width='80%'}
+
+# Create forest plot
+forest(final_meta, 
+       slab = meta_analysis$AuthorID,
+       xlab = "Log-transformed proportion aware of PrEP awareness")
+
+```
+
+We see that, of the 17 studies, there were none that had a prevalence value that crossed the null (Figure 1). We also see very high prevalence values (Study 10 and 16), so we're likely to go forward with meta-regression to potentially determine whether characteristics from these studies or populations had an impact on the estimate.
+
+# Meta-regression
+
+While meta-analysis lets us pool the mean prevalence of PrEP awareness across the 17 studies, we want to evaluate what is accounting for observed variation in those prevalence estimates. Is it differences between study population? Is it differences in sampling strategies? Is it differences in how PrEP awareness was asked in their surveys? Meta-regression is incredibly useful in giving context to why effect sizes are different between studies. Meta-analysis is a great way to generate a pooled estimate of an average prevalence. However, meta-regression helps us understand the "why", even when it seems evident. 
+
+For this scenario, we had four variables selected based on feasibility of data availablity from the 17 papers: PrEP question exclusion based on HIV status, Sex of study population, Percentage of non-Hispanic White youth (our proxy for race/ethnicity), and percentage of population sexually active. 
+
+Meta-regression was conducted using a mixed-effects model, where study-level moderators were treated as fixed effects and residual heterogeneity was modeled via a random intercept. Confidence intervals for adjusted prevalence estimates were derived using the variance-covariance matrix of the fixed effects.
+
+Forward-selection of the four variables were done to determine whether they would be chosen predictor for the final meta-regression model. Let's take a look at our first predictor.
+
+```{r metaregression1, message = FALSE, warning = FALSE}
+
+#Results reported
+FINALmodelQEx <- rma(yi = log_prev,              #effect size (log-transform)
+                     vi = var_log_prev,          # variance of effect size
+                        mods = ~ PrEPQExclusion, # Model statement
+                        data = meta_analysis,    # data set
+                        method = "REML")         # method for computing RE model
+summary(FINALmodelQEx)   # to print out results
+
+```
+
+From only looking at whether a study had an HIV-negative status exclusion criteria for PrEP awareness, we see that it was significantly associated with the prevalence effect size (Beta=1.0398; tau2 = 0.3362 (SE=0.1293)). 
+
+```{r metaregressionexp1}
+
+exp(FINALmodelQEx$beta)
+exp(FINALmodelQEx$ci.lb) 
+exp(FINALmodelQEx$ci.ub) 
+```
+If you were to interpret this, studies that included an HIV-negative criterion in their PrEP awareness questions were found to have 2.83 (PR: 2.83, 95% CI: 1.46 - 5.48) times higher prevalence than studies that did not have this criteria. 
+
+We're now going to repeat this process for the three additional predictors we decided a priori as a group. For sex of study population, it was decided to dichotomize the variable to whether the study had males only (male_only) due to the small amount of studies retrieved that had women-only study populations.
+
+```{r table3, results='asis', message = FALSE, warning = FALSE, echo=FALSE}
+cat("\\begin{table}[!ht]\n\\centering\n\\textbf{Table 3.} Meta-Regression Estimates and p-values of remaining predictors\n")
+#Race of study population
+FINALmodelRace <- rma(yi = log_prev, 
+                         vi = var_log_prev, 
+                         mods = ~ PercNHW, 
+                         data = meta_analysis, 
+                         method = "REML")
+
+#Sexually active
+FINALmodelSxAct <- rma(yi = log_prev, 
+                      vi = var_log_prev, 
+                      mods = ~ PercSexAct, 
+                      data = meta_analysis, 
+                      method = "REML")  
+
+#Sex of study population - reduced to male-only studies or not
+FINALmodelSex <- rma(yi = log_prev,              
+                     vi = var_log_prev,          
+                        mods = ~ male_only, 
+                        data = meta_analysis,    
+                        method = "REML")         
+
+#TABLE SET-UP
+
+#Extracting betas and p-values
+coef_race  <- summary(FINALmodelRace)$beta[-1]
+coef_sxact <- summary(FINALmodelSxAct)$beta[-1]
+coef_sex   <- summary(FINALmodelSex)$beta[-1]
+
+
+pval_race  <- summary(FINALmodelRace)$pval[-1]
+pval_sxact <- summary(FINALmodelSxAct)$pval[-1]
+pval_sex   <- summary(FINALmodelSex)$pval[1]
+
+
+# Remove intercept rows
+
+# Build data frame for Table 3
+metareg_pred <- data.frame(
+  Predictor = c("Percent_NHWhite", "Percent_SexuallyActive", "MaleOnly"),
+  Estimate  = round(c(coef_race, coef_sxact, coef_sex), 3),
+  p_value   = format.pval(c(pval_race, pval_sxact, pval_sex), digits = 3, eps = 0.001)
+)
+
+knitr::kable(metareg_pred, align = "lccc", booktabs = TRUE) %>%
+  kableExtra::kable_styling(font_size = 9) %>%
+
+  
+cat("\\vspace{1mm}\n\\noindent\\footnotesize Note: Each estimate and p-value were generated from their own independent models.\n")
+cat("\\end{table}\n")
+
+
+```
+
+We see that whether a study population was only male or not and percentage of study population reporting being sexually active was found to be significant with the effect size (Table 3).  In addition, we see that non-Hispanic white percentage within a study population was not significantly associated with the effect size. 
+
+Based on your discussion with your workgroup, you make two decisions. One, you decide to remove the sex variable (male_only) based on concerns that dichotomizing it in that manner may not be helpful. Second, it was still decided to be kept based on theoretical background of differences of PrEP awareness.\textsuperscript{11} 
+
+```{r metaregressionadj, eval=TRUE, message = FALSE, warning = FALSE}
+#Final adjusted model using three variables
+FINALmodelAdj <- rma(yi = log_prev,         
+                        vi = var_log_prev,  
+                        mods = ~ PercSexAct + PrEPQExclusion + PercNHW, 
+                        data = meta_analysis, 
+                        method = "REML")  
+summary(FINALmodelAdj)   
+```
+
+From this information, we see that the test for moderators that the predictors were associated with the effect size (QM(df = 4) = 29.7508). We also see that the difference in effect sizes where they were an HIV-negative criterion in their PrEP awareness questions was 2.37 (95% CI: 1.40 - 4.04) after adjusting for proportion of study population being sexually active and non-Hispanic White. We also see that the model accounted to 65.42% of the heterogeneity. 
+
+```{r metaregressionadjexp1}
+
+#Adjusted prevalence
+log_prev = (-3.1076*1) + (0.0184 * 54.2) + (0.8649 * 0.222) + (0.0123*0.481)
+adjusted_prev = exp(log_prev) 
+
+#Getting variance-covariance matrix of final model
+vcov_matrix <- vcov(FINALmodelAdj)
+#Adjusted values for betas in order
+x <- c(1, 54.2, 0.222, 0.481)  
+
+#Defining covariate vector 
+beta_hat <- coef(FINALmodelAdj)
+log_prev_hat <- sum(x * beta_hat)
+var_log_prev_hat <- t(x) %*% vcov_matrix %*% x
+
+se_log_prev <- sqrt(var_log_prev_hat)
+lower_log <- log_prev_hat - 1.96 * se_log_prev
+upper_log <- log_prev_hat + 1.96 * se_log_prev
+
+exp(log_prev_hat)
+exp(lower_log)
+exp(upper_log)
+
+```
+
+From our final meta-regression model, we see that the mean prevalence of PrEP awareness among U.S. youth was 14.8% (95% CI: 9.1 - 24.1) after adjusting for PrEP question exclusion by HIV status and percentage of study population being sexually active and non-Hispanic White. We see a significant difference when comparing between Meta-Analysis and the final model for Meta-Regression (Table 4). 
+
+
+```{r table4, results='asis', echo=FALSE}
+
+cat("\\begin{table}[!ht]\n\\centering\n\\textbf{Table 4.} Pooled and Adjusted Prevalence Estimates\n") 
+
+#Unadjusted prevalence from meta-analysis
+pooled_prev  <- format(round(exp(final_meta$beta)*100,1), nsmall = 1)  
+pooled_lowci <- format(round(exp(final_meta$ci.lb)*100,1), nsmall = 1)
+pooled_uppci <- format(round(exp(final_meta$ci.ub)*100,1), nsmall = 1)   
+
+adj_prev  <- format(round(exp(log_prev_hat)*100,1), nsmall = 1)
+adj_lowci <- format(round(exp(lower_log)*100,1), nsmall = 1)
+adj_uppci <- format(round(exp(upper_log)*100,1), nsmall = 1)
+
+# Create data frame to knit Table 3 for LaTeX
+results <- data.frame(
+  Estimate = c("Pooled Prevalence", "Adjusted Prevalence"),
+  Prevalence = c(pooled_prev, adj_prev),
+  CI = c(
+    paste0(pooled_lowci, " – ", pooled_uppci),
+    paste0(adj_lowci, " – ", adj_uppci)
+  )
+)
+
+# Render table
+knitr::kable(results, align = "lcc", booktabs = TRUE, col.names = c("", "", "")) %>%
+  add_header_above(c(" " = 1, "Prevalence (%)" = 1, "95% CI" = 1)) 
+
+cat("\\end{table}\n")
+```
+
+
+```{=latex}
+\newpage
+```
+# Assessing for bias
+
+To determine whether there was a publication bias for our selected papers, we will look at a funnel plot of our prevalence from the studies:
+
+```{r funnelplot, fig.cap="Funnel Plot of Log-Transformed Prevalence", fig.align='center', out.width='80%'}
+#Funnel plot 
+funnel(final_meta,
+       xlab = "Log-transformed Prevalence of PrEP Awareness",
+       ylab = "Standard Error")
+```
+
+From this image, what you're looking for is symmetry, as do we see an image that's symmetrical with the dotted straight line (the mean effect size) as your point of reference (Figure 2). The two additional lines that diverge from the top are the 95% CI of the effect size. Dots that are toward the top of the plot indicates larger sample sizes, which is why the white triangle gets bigger as the standard error gets bigger. 
+
+In this example, we see that it's not quite symmetric. We see there aren't many studies with small sample sizes that didn't have an significant value for prevalence of PrEP awareness while we see those with larger sample sizes are more spread. This could indicate that there is a bias based on sample size of the studies, as in they're likely to report smaller prevalence estimates than large-scale studies. 
+
+```{r eggers}
+# Egger's test
+regtest(final_meta, predictor = "ni")
+
+```
+
+To check for this, we go forward with the Egger's test, which tests whether sample sizes impact publication bias. The results indicate that the relation between sample size and effect size of PrEP awareness prevalence wasn't significant (Z = -1.7722, p=.0764).
+
+# Discussions
+
+After data extraction and getting the data to R, we see that the estimated average prevalence of PrEP awareness among U.S. youth was 27%. However, after adjusting for key study-level characteristics, the pooled prevalence was 14.8%. This indicates that there was significant variation of PrEP awareness by racial-makeup of the study population, whether someone reported being sexually active, and whether the PrEP questions had a HIV screening criteria. 
+
+The procedures were seem extensive and complex, the outcome offers a clean narrative: PrEP awareness among U.S. youth varies by whether they report being sexually active, and whether their HIV status is known and negative, and by race/ethnicity. Even though these 17 papers used are fictitious, if they were true the findings illustrate how tailored interventions could be designed to improve PrEP outreach for U.S. youth. If this pattern was observed for a meta-analysis using real-world data, they would offer actionable insights for HIV prevention programs targeting youth populations.   
+
+# Limitations
+
+For this exercise, dummy data was used with the assumption that data extraction followed formal procedures for SRMA, such as drafting a study protocol for registration or adhering to Cochrane guidance.\textsuperscript{12,13} For SRMA, those steps are done to ensure transparency throughout the review process to ensure reproducibility in literature search strategies and inclusion criteria. 
+
+The evaluation metrics for the final meta-regression model reveals that, there remains more unaccounted heterogeneity. Even though the final model may have account for 65.42% of the heterogeneity, there stil remains a significant amount that may explain the differences in prevalence estimates across the studies. It could likely be additional information from the study-level explaining those differences. In practice, such information may not likely be a variable in your meta-regression could be issues for extracting that information across all studies or having incomplete information that could prevent those characteristics going forward for meta-regression.
+
+This workflow did not undergo critical appraisal of these fictional papers, reflecting the pedagogical nature of the exercise rather than a methodological oversight. In a full SRMA, a risk of bias would be assessed using validated tools.\textsuperscript{14} There are methods to acquire this information and demonstrate risk of bias visually.\textsuperscript{15}
+
+In addition, this exercise had made a lot of assumptions for you in regards to selecting your final model for meta-regression. You may not agree with one decision or you may not have proposed your thoughts differently. That's part of the process of working in collaboration with experts that have different perspectives or different experiences that may benefit the project. If you disagree, the dummy data is publicly available for you to test your own decisions. 
+
+# Impact 
+
+If there is a need to synthesize an abundance of information to get a number of interest, meta-analysis offers a cost-effective approach to synthesizing that information and estimating clear, actionable metrics. Beyond estimating pooled outcomes, it enables deeper inquiry into why those outcomes vary, guiding programs to prioritize outreach and allocate resources where they’re needed most. If differences by demographics and behavior are evident, targeted budgeting becomes possible, increasing the return on investment for program efforts.
+
+More importantly, Meta-analysis demonstrates how evidence synthesis can support cross-functional collaborations and inform decision-making across sectors. This activity demonstrates how evidence synthesis can be used not only to estimate pooled numbers like prevalence, but permits collaborative reasoning to the WHY, as in why those numbers may be different. You can’t simply run a search, extract data, and declare the analysis complete. The parameters for literature review, study selection, and interpretation demand a collaborative process that reflects different expertise. By structuring the workflow to accommodate diverse viewpoints and analytic priorities, the methods reflect a scalable approach to evidence generation that can be adapted across disciplines, whether in public health, education, policy, or beyond.     
+
+# Acknowledgements
+
+The foundation of this workflow was developed during my doctoral coursework in Systematic Review and Meta-Analysis, with subsequent revisions to ensure the work reflects my independent contributions. I am especially grateful to Dr. Terri Pigott of the College of Education and Human Development at Georgia State University, whose instruction and mentorship introduced me to key methodological principles and R packages such as *metafor* and *robvis* to execute and refine my own meta-analysis workflow for the remainder of my career. I also extend my thanks to Dr. Chao Song, who generously offered her time to peer-review the document demonstrating this workflow. Her thoughtful feedback was valuable in refining the document to its final stage.  
+
+# Suggested Citation: 
+
+Trujillo L. Meta-Analysis and Meta-Regression for Prevalence using R. GitHub. October 7, 2025. https://github.com/lindst973404/MetaAnalysisMetaRegressionR_Prev.
+
+# References
+
+1. Cochrane Library. About PICO. Cochrane Library website. https://www.cochranelibrary.com/about-pico.. Published 2025. Accessed September 17, 2025.
+2. Urban Institute. Combining racial groups in data analysis can mask important differences in communities. Urban Institute website. https://www.urban.org/urban-wire/combining-racial-groups-data-analysis-can-mask-important-differences-communities.. Published March 22, 2021. Accessed September 17, 2025.
+3. Centers for Disease Control and Prevention. Diagnoses, deaths, and prevalence of HIV in
+the United States and 6 territories and freely associated states, 2022. HIV Surveillance
+Report. 2024;35. Published May 2024. Accessed September 17, 2025.
+https://www.cdc.gov/hiv-data/nhss/hiv-diagnoses-deaths-prevalence.html
+4. Friedman MR, Sang JM, Bukowski LA, et al. Prevalence and Correlates of PrEP Awareness and Use Among Black Men Who Have Sex with Men and Women (MSMW) in the United States. AIDS Behav. 2019;23(10):2694-2705. doi:10.1007/s10461-019-02446-3
+5. Boudewyns V, Madson G, Anderson SKE, et al. Examining the Association Between Exposure to the #ShesWell Campaign and Black Women's Conversations with Healthcare Providers About Pre-Exposure Prophylaxis (PrEP). Int J Environ Res Public Health. 2025;22(8):1224. Published 2025 Aug 6. doi:10.3390/ijerph22081224
+6. Centers for Disease Control and Prevention: US Public Health Service: Preexposure prophylaxis for
+the prevention of HIV infection in the United States—2021 Update: a clinical practice guideline.
+https://www.cdc.gov/hiv/pdf/risk/prep/cdc-hiv-prep-guidelines-2021.pdf. Published December 2021.
+7. Finlayson T, Cha S, Xia M, et al. Changes in HIV Preexposure Prophylaxis Awareness and Use Among Men Who Have Sex with Men - 20 Urban Areas, 2014 and 2017. MMWR Morb Mortal Wkly Rep. 2019;68(27):597-603. Published 2019 Jul 12. doi:10.15585/mmwr.mm6827a1
+8. Carnegie Mellon University. Systematic Reviews and Meta-Analysis Course. Open Learning Initiative. Modules 6–7. Accessed April 2022. https://oli.cmu.edu/courses/systematic-reviews-and-meta-analysis
+9. Higgins JPT, Thomas J, Chandler J, et al., eds. Cochrane Handbook for Systematic Reviews of Interventions. Version 6.3 (updated February 2022). Cochrane; 2022. Accessed October 6, 2025. https://www.cochrane.org/authors/handbooks-and-manuals/handbook/current/chapter-10#section-10-3-1
+10. Viechtbauer W. metafor: Meta-Analysis Package for R. Version 4.8-0. Published January 28, 2025. Accessed September 17, 2025. https://cran.r-project.org/web/packages/metafor/metafor.pdf
+11. Baugher AR, Trujillo L, Kanny D, et al. Racial, Ethnic, and Gender Disparities in Awareness of Preexposure Prophylaxis Among HIV-Negative Heterosexually Active Adults at Increased Risk for HIV Infection - 23 Urban Areas, United States, 2019. MMWR Morb Mortal Wkly Rep. 2021;70(47):1635-1639. Published 2021 Nov 26. doi:10.15585/mmwr.mm7047a3
+12. PROSPERO. Systematic review registration: CRD42019134872. PROSPERO website. https://www.crd.york.ac.uk/PROSPERO/view/CRD42019134872.. Accessed September 17, 2025.
+13. Higgins JPT, Thomas J, Chandler J, Cumpston M, Li T, Page MJ, Welch VA, eds. Cochrane Handbook for Systematic Reviews of Interventions. Version 6.5. Cochrane; 2024. Accessed September 17, 2025. https://www.cochrane.org/authors/handbooks-and-manuals/handbook/current
+14. Cochrane. GRADE: Cochrane Methodology. Cochrane website. https://www.cochrane.org/learn/courses-and-resources/cochrane-methodology/grade.. Accessed September 17, 2025.
+15. McGuinness LA, Higgins JPT. robvis: Visualization tool for risk-of-bias assessments. Risk of Bias website. https://www.riskofbias.info/welcome/robvis-visualization-tool.. Accessed September 17, 2025.
