@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this instructional text or synthetic data in your work, please cite it as below."
+title: "Meta-analysis and Meta-regression of Prevalence Estimates"
+authors:
+  - family-names: Trujillo
+    given-names: Lindsay
+    orcid: https://orcid.org/0000-0002-0024-3278 
+date-released: 2025-10-06
+version: 1.0.0
+license: MIT
+repository-code: https://github.com/lindst973404/MetaAnalysisMetaRegressionR_Prev
+keywords:
+  - meta-analysis
+  - meta-regression
+  - prevalence
+  - reproducibility
+  - R
+  - synthetic data
